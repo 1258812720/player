@@ -146,7 +146,7 @@
 	}
 	setSize();
 	// 颜色
-	let cor = ['#ff0000', '#FF9900', '#0099CC'];
+	let cor = ['#ff0000', '#FF9900', '#55aaff'];
 	let xf = ctx.createLinearGradient(0, 0, 200, 200);
 
 	xf.addColorStop(0, cor[0]);
