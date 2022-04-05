@@ -1,12 +1,33 @@
 (function() {
-    let fileList = [];
+    function $(el) {
+        return document.querySelector(el);
+    }
     let styleArr = ["line", "bar"];
     let style = localStorage.getItem("audio-style") || styleArr[0];
     let _index = 0;
     let pro = document.getElementById("progress");
+    let ul = $(".play-list");
+    let pt = null;
+    // 响应式列表
+    const playList = new Proxy([], {
+        set(target, key, value) {
+            return Reflect.set(target, key, value);
+        },
+        get(t, p) {
+            pt = (playList);
+            return t[p];
+        }
+    });
 
-    function $(el) {
-        return document.querySelector(el);
+    function renderList() {
+        let f = document.createDocumentFragment();
+        for (let index = 0; index < pt.length; index++) {
+            const el = pt[index];
+            const li = document.createElement("li");
+            li.innerText = el.name;
+            f.appendChild(li);
+        }
+        ul.appendChild(f);
     }
     // 改变样式
     $("#change").onclick = function() {
@@ -30,7 +51,8 @@
         percent = 0; // 频谱水平平铺比例
 
     // 播放速度
-    let el_rate = document.getElementById("rate")
+    let el_rate = document.getElementById("rate"),
+        globalVol = null;
 
     function initAudio() {
         if (audioCtx != null) {
@@ -39,23 +61,30 @@
         audioCtx = new(window.AudioContext || window.webkitAudioContext)();
         audioSource = audioCtx.createBufferSource();
         analyserNode = audioCtx.createAnalyser();
-
-
         // 过滤器
         let filter = audioCtx.createBiquadFilter();
-        filter.type = 'lowpass';
-
-        console.log(audioSource)
-            // 自动切换
-            // audioSource.onended = () => {
-            //   next();
-            // };
+        // filter.type = 'lowpass';
+        // 音量
+        globalVol = audioCtx.createGain();
+        // 自动切换
+        // audioSource.onended = () => {
+        //   next();
+        // };
     }
 
+    $("#volumn").onchange = function() {
+        globalVol.gain.value = this.value / 100;
+    }
 
     el_rate.onchange = function() {
         audioSource.playbackRate.value = this.value
     }
+
+    pro.oninput = function() {
+        let value = Number(this.value);
+        audioCtx.audioWorklet.currentTime = value.toFixed(2);
+    }
+
     let time = null,
         rf = null,
         render = null,
@@ -74,12 +103,11 @@
             analyserNode.getByteFrequencyData(arr);
             time = rf(render);
             canvas(arr);
+            let t = timeFormat(audioSource.context.currentTime),
+                a = timeFormat(audioSource.buffer.duration);
+            timer.innerText = t.h + ":" + t.m + ":" + t.s + "/" + a.h + ":" + a.m + ":" + a.s;
         };
         rf(render);
-        showTime = setInterval(() => {
-            let t = timeFormat(audioCtx.currentTime);
-            timer.innerText = t.h + ":" + t.m + ":" + t.s;
-        }, 1000);
     }
 
     function timeFormat(tamp) {
@@ -99,6 +127,18 @@
         index > 0 ? index-- : (index = len - 1);
         readFile();
     };
+
+    function pushToList(file) {
+        let name = file.name,
+            prefix = name.substr(name.lastIndexOf(".") + 1),
+            attr = {
+                name,
+                prefix,
+                file: file,
+                size: file.size / 1024 / 1024
+            }
+        playList.push(attr);
+    }
     // 下一曲
     $("#next").onclick = next;
     $("#prev").onclick = prev;
@@ -119,7 +159,7 @@
             }
         }
     };
-
+    // 播放
     $("#play").onclick = pause;
     let play = (e) => {
         audioSource.buffer = e;
@@ -128,16 +168,13 @@
         analyserNode.connect(audioCtx.destination);
         dataDeal();
         audioSource.loop = false;
-        // 循环播放，默认为false
-        audioSource.start(2);
+        audioSource.start(0); // 循环播放，默认为false
+
     };
     document.getElementById("stop").onclick = function() {
         audioSource.stop();
     }
-    pro.oninput = function() {
-        let value = this.value;
-        audioSource.start(value);
-    }
+
 
     function getFileName(path, prefix) {
         let i = path.lastIndexOf(".");
@@ -145,28 +182,18 @@
     }
 
     function readFile() {
-        let file = fileList[index];
+        let file = playList[index];
         $("#index").innerText = index + 1 + "/" + len;
         if (file !== undefined) {
             initAudio();
         }
         let txtName = getFileName(file.name, "dtr");
-        axios
-            .get(`http://127.0.0.1/${txtName}`, {
-                responseType: "blob",
-            })
-            .then((data) => {
-                console.log(data);
-            })
-            .catch((err) => {
-                console.log("错误", err);
-            });
         let fr = new FileReader();
         fr.onload = function(e) {
             $("#res").innerText =
-                fileList[index].name +
+                file.name +
                 " 大小:" +
-                (fileList[index].size / 1024 / 1024).toFixed(2) +
+                (file.size / 1024 / 1024).toFixed(2) +
                 " MB";
             audioCtx.decodeAudioData(
                 e.target.result,
@@ -178,7 +205,7 @@
                 }
             );
         };
-        fr.readAsArrayBuffer(file);
+        fr.readAsArrayBuffer(file.file);
     }
     // 设置线条的宽度
     let c = document.querySelector("#can"),
@@ -194,10 +221,8 @@
         c.setAttribute("height", height);
     }
     setSize();
-    // 颜色
     let cor = ["#ff0000", "#FF9900", "#55aaff"];
     let xf = ctx.createLinearGradient(0, 0, 200, 200);
-
     xf.addColorStop(0, cor[0]);
     xf.addColorStop(0.5, cor[1]);
     xf.addColorStop(1, cor[2]);
@@ -210,23 +235,42 @@
     document.ondrop = function(e) {
         e.preventDefault();
     };
+    // 双击事件
+    c.addEventListener("dblclick", () => {
+        const evt = new MouseEvent("click", {
+            bubbles: false,
+            cancelable: true,
+            view: window
+        });
+        $("input[type='file']").dispatchEvent(evt);
+        $("input[type='file']").addEventListener("change", function() {
+            let file = this.files;
+            for (let i = 0; i < file.length; i++) {
+                const element = file[i];
+                pushToList(element)
+            }
+            readFile();
+        })
+    })
+
+    // 拖拽事件
     c.addEventListener("dragenter", (e) => {
         pEl.classList.add("drag-hover");
         e.dataTransfer.dropEffect = "copy";
         c.addEventListener("drop", function(data) {
             let t = data.dataTransfer.files;
             for (var i = 0; i < t.length; i++) {
-                fileList.push(t[i]);
+                pushToList(t[i]);
             }
             pEl.classList.remove("drag-hover");
-            len = fileList.length;
+            len = playList.length;
             readFile();
         });
         c.addEventListener("dragleave", function() {
             pEl.classList.remove("drag-hover");
         });
     });
-    // 添加监听
+    // 图形
     function canvas(arr) {
         ctx.clearRect(0, 0, width, height);
         ctx.beginPath();
